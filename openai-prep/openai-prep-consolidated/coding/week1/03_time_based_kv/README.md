@@ -1,6 +1,6 @@
 # Problem 3: Time-Based Key-Value Store
 
-**Status:** Not yet scaffolded. Tell Claude Code "scaffold problem 3" when you're ready.
+**Status:** Scaffolded. Start with `00_prereqs.md`, then `problem.md`. Reference lives in `interviewer_notes.md` (read after your attempt).
 
 **One-liner:** Build a key-value store that can retrieve values at specific timestamps.
 
