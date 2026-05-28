@@ -43,7 +43,6 @@ def worker(q: queue.Queue, worker_id: int) -> None:
     # TODO: implement (~15 lines)
     while True:
         try:
-
             task = q.get()
             if task is None:
                 break

@@ -147,7 +147,7 @@ with WorkerPool(num_workers=4, handler=handle) as pool:
 
 **This is exactly what `concurrent.futures.ThreadPoolExecutor` is** — its `__exit__` does this same dance, but with futures instead of a raw queue. So you should think of `ThreadPoolExecutor` as "WorkerPool with a nicer API for getting results back."
 
-**Why the raw version still matters for the crawler:** workers in a crawler *produce more work* — each fetched page enqueues new URLs. `ThreadPoolExecutor.submit()` from inside a submitted task is awkward (you'd have to track an unbounded set of futures and `wait()` on them in a loop). With a raw `queue.Queue`, you just call `self._q.put(new_url)` inside the worker. That recursive-enqueue ergonomics is why you reach for the raw version.
+**Why the raw version still matters for the crawler:** workers in a crawler *produce more work* — each fetched page enqueues new URLs. `ThreadPoolExecutor.submit()` from inside a submitted task means tracking a set of in-flight futures and `wait()`-ing on them in a loop. With a raw `queue.Queue`, you just call `self._q.put(new_url)` inside the worker. That recursive-enqueue ergonomics is why the raw queue is often the cleaner reach. Both work — drill `practice/05_thread_pool_executor.py` walks through the futures-tracking loop side-by-side so you can feel the trade-off.
 
 **Practice:** write the snippet above from memory. Then change the worker to enqueue new items based on what it pulled (this is the crawler's recursion).
 
@@ -245,7 +245,7 @@ If you call `task_done()` before the `q.put`s, you can hit a window where `unfin
 
 | Idiom | When |
 |-------|------|
-| `ThreadPoolExecutor` + futures | Bounded fan-out per node, no recursion-back-into-the-pool. Not the right fit for a crawler. |
+| `ThreadPoolExecutor` + futures-tracking loop | Works for recursive crawls too: hold in-flight futures in a set, `wait(..., FIRST_COMPLETED)`, submit children as they surface, loop until the set empties. Termination is `while in_flight:` and the `with` exit reaps the pool — no poison pills. More moving parts than `queue.join`, but a legitimate answer. Drill it in `practice/05`. |
 | Outer "active workers" counter + Condition | DIY equivalent of `task_done`/`join`. Easy to get wrong. |
 | Daemon threads + sleep until queue empty for K seconds | Polling. Brittle. Don't. |
 
@@ -270,6 +270,200 @@ def hostname(url: str) -> str:
 `urllib.parse.urlparse(url).hostname` is correct, but it's overkill for a problem that defines the URL format strictly. Use the simple version; mention the library version exists if the interviewer presses on URL formats.
 
 **Done when:** you can read the LC 1242 problem statement and immediately know the host-extraction is a one-liner, not a digression.
+
+---
+
+## Concept 6: `ThreadPoolExecutor` — the pool you don't hand-build
+
+**What you're learning:** the standard library's worker pool, and the two ways to drive it. This is the "could you do it *without* managing threads by hand?" follow-up an interviewer asks the moment your queue+pills solution works. A strong answer needs both regimes below.
+
+**The 30-second story:**
+
+`concurrent.futures.ThreadPoolExecutor` is Concepts 2 + 4 wrapped in a library. It owns the threads, hands you a `submit()`/`map()` API, returns a `Future` per task, and its `__exit__` joins everything. The manual dance — spin up N threads, drop poison pills, `t.join()` each — disappears. In exchange you learn exactly one new object: the **Future**.
+
+**The Future — the only new idea here:**
+
+A `Future` is a handle to a result that may not exist yet. `submit()` returns one *immediately* (it does NOT block); the work runs on a pool thread, and the Future is how you later ask "are you done? what did you produce? did you blow up?"
+
+```python
+fut = ex.submit(fn, arg)   # returns now; fn runs on a worker thread
+```
+
+**The lifecycle — a Future is a tiny state machine.** It moves through these states, one direction only, and never goes backward:
+
+```
+            ex.submit(fn)
+                 │
+                 ▼
+            ┌─────────┐   a worker picks it up    ┌─────────┐   fn returns / raises   ┌──────────┐
+            │ PENDING │ ───────────────────────▶ │ RUNNING │ ──────────────────────▶ │ FINISHED │
+            └─────────┘                           └─────────┘                          └──────────┘
+                 │                                                                      (has a result
+                 │  fut.cancel()  — only works while still PENDING                       OR an exception)
+                 ▼
+            ┌───────────┐
+            │ CANCELLED │   never ran
+            └───────────┘
+```
+
+The one rule worth memorizing: **you can only cancel a task that hasn't started.** Once a worker has picked it up (RUNNING), `cancel()` returns `False` and the task runs to completion — there is no preemption, no "kill the thread." FINISHED covers both success and failure; "the function raised" is a *normal* terminal state, and the exception sits inside the Future waiting for you to ask.
+
+**The methods — what each one does and whether it blocks:**
+
+| Method | Blocks? | Returns / does | When you reach for it |
+|--------|---------|----------------|------------------------|
+| `fut.result(timeout=None)` | **YES** until FINISHED | the return value, or **RE-RAISES** the task's exception | the main one — get the answer |
+| `fut.exception(timeout=None)` | **YES** until FINISHED | the exception object, or `None` if it succeeded | inspect failure *without* raising |
+| `fut.done()` | no | `True` if FINISHED or CANCELLED | poll without committing to a block |
+| `fut.running()` | no | `True` if a worker is currently executing it | rarely; introspection |
+| `fut.cancelled()` | no | `True` if it was cancelled before running | confirm a cancel took |
+| `fut.cancel()` | no | tries to cancel; `True` only if still PENDING | abandon not-yet-started work |
+| `fut.add_done_callback(fn)` | no | calls `fn(fut)` when it reaches FINISHED/CANCELLED | event-driven; callback runs on the worker's thread |
+
+Note `result()` and `exception()` take an optional `timeout` — pass one and they raise `TimeoutError` instead of blocking forever, which is how you avoid a hang when a task wedges.
+
+The property that bites people: **`.result()` re-raises, and if you never call it the exception is swallowed.** A fire-and-forget task that throws fails *silently* — the traceback is trapped inside the Future (FINISHED-with-exception) until someone calls `.result()` or `.exception()`. If you submit work and never inspect the futures, you are blind to failures. That's the #1 executor footgun. (`as_completed`/`map` save you here because iterating them forces you through each result.)
+
+**Minimal program — Regime A, fixed batch:**
+
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+with ThreadPoolExecutor(max_workers=4) as ex:
+    futures = [ex.submit(fetch, url) for url in urls]
+    for fut in as_completed(futures):   # yields each as it finishes
+        page = fut.result()             # re-raises if THAT fetch failed
+        ...
+# leaving `with` waits for all tasks, then tears the threads down
+```
+
+Three ways to collect results — know when each fits:
+
+| API | Result order | Use when |
+|-----|--------------|----------|
+| `as_completed(futures)` | completion (fastest first) | react to each result ASAP |
+| `ex.map(fn, iterable)` | **input** order | you want results aligned to inputs; re-raises on iteration |
+| `fut.result()` on a saved list | your list order | you need one specific future's result at a specific time |
+
+**The two regimes — this distinction *is* the concept:**
+
+*Regime A — fixed batch (the easy 90%).* You know every task up front. `submit` them all, or `map` the iterable, collect. This is what the executor is built for.
+
+*Regime B — dynamic / recursive (the crawler).* Tasks discover MORE tasks as they run. You can't `map` — you don't have the list. The idiom tracks in-flight futures and drains:
+
+```python
+from concurrent.futures import wait, FIRST_COMPLETED
+
+with ThreadPoolExecutor(max_workers=N) as ex:
+    inflight = {ex.submit(fetch, root)}
+    while inflight:
+        done, inflight = wait(inflight, return_when=FIRST_COMPLETED)
+        for fut in done:
+            for child in fut.result():
+                with lock:                       # still need it — see below
+                    if child in seen: continue
+                    seen.add(child)
+                inflight.add(ex.submit(fetch, child))
+```
+
+`wait(set, return_when=FIRST_COMPLETED)` returns `(done, not_done)`. Re-bind `inflight` to `not_done`, process the `done` ones (which may submit new futures), loop. Termination is `while inflight:` — when the set empties, all reachable work is finished. No poison pills; the `with` exit reaps the pool.
+
+**Why the lock does NOT go away:** the executor manages *threads*, not *your shared state*. `visited`/`seen` still races exactly as in Concept 3. The executor saves you the pool plumbing — it does nothing for correctness on shared data. Candidates who think "I used the safe library pool, so I don't need a lock" ship the double-fetch bug.
+
+**The deadlock to never write:** don't block on a Future (`.result()`) from *inside* a task running in the same bounded pool, when the thing you're waiting on itself needs a free worker. All workers can end up blocked waiting for tasks that can't be scheduled because all workers are blocked. The crawler is safe because you submit-and-return (you never `.result()` inside a task) — but know the trap, it's a classic follow-up.
+
+**Sizing `max_workers`:** for I/O-bound work, more than the CPU count is fine and usually wanted — you're overlapping *waits*, not computing. The default (`min(32, os.cpu_count() + 4)`) is sensible. Dozens is normal for a crawler; don't reach for hundreds without a reason (thread stacks and context-switch cost are real).
+
+**`map` vs `submit` in one line:** `map` when the work is a clean function over a list and you want input-ordered results; `submit` when you need the Futures themselves (to `as_completed`, to track in a set, to cancel, or because the work is dynamic).
+
+**Done when:** you can take your queue+pills crawler and rewrite it with `ThreadPoolExecutor` + the `wait` loop, and articulate what got simpler (no pills, no manual join, no `task_done`) and what did NOT (the `visited` lock is still mandatory).
+
+---
+
+## Recall templates — type these from a blank screen
+
+Everything above is commentary on these four. If you can type all four cold, you can derive the rest. Memorize the **shape** and the **one gotcha** attached to each.
+
+**1. Raw queue pool** — gotcha: `task_done` in `finally`; pills *after* `join`.
+```python
+q = queue.Queue()
+def worker():
+    while True:
+        item = q.get()
+        try:
+            if item is None:        # poison pill → exit
+                return
+            handle(item)            # may q.put() more work
+        finally:
+            q.task_done()           # ALWAYS, pill included
+
+# start N threads targeting worker
+# ... enqueue work ...
+q.join()                           # drain
+for _ in threads: q.put(None)      # pills
+for t in threads: t.join()         # reap
+```
+
+**2. Check-then-act** — gotcha: the slow work goes *outside* the lock.
+```python
+with lock:
+    if x in seen:
+        return                     # or continue
+    seen.add(x)
+fetch(x)                           # outside — never hold the lock during I/O
+```
+
+**3. ThreadPoolExecutor, fixed batch** — gotcha: `.result()` re-raises the task's exception.
+```python
+with ThreadPoolExecutor(max_workers=N) as ex:
+    futures = [ex.submit(fn, x) for x in items]
+    for f in as_completed(futures):    # completion order
+        use(f.result())
+    # or, input order, one line:
+    results = list(ex.map(fn, items))
+```
+
+**4. ThreadPoolExecutor, dynamic/recursive** — gotcha: loop until the in-flight set empties.
+```python
+seen = {root}
+lock = threading.Lock()
+with ThreadPoolExecutor(max_workers=N) as ex:
+    inflight = {ex.submit(fetch, root)}
+    while inflight:
+        done, inflight = wait(inflight, return_when=FIRST_COMPLETED)
+        for f in done:
+            for child in f.result():
+                with lock:
+                    if child in seen:
+                        continue
+                    seen.add(child)
+                inflight.add(ex.submit(fetch, child))   # outside the lock
+```
+
+**The mapping to hold in your head** — template 1 → template 4:
+
+| Raw queue (1) | Executor (4) |
+|---------------|--------------|
+| `queue.Queue` | set of in-flight futures |
+| `q.join()` | `while inflight:` |
+| poison pills | nothing — `with` exit reaps |
+| `q.get` / `task_done` | `wait(..., FIRST_COMPLETED)` |
+
+---
+
+## Hands-on drills (`practice/`)
+
+Reading the concepts above is not enough — the signal is in your fingers, not your head. The `practice/` folder has scaffolds (TODO markers, not finished code) that isolate each primitive so you build muscle memory before assembling the real crawler. Fill them in, run them, then delete and re-do.
+
+| Drill | Builds | Backing concept |
+|-------|--------|-----------------|
+| `01_producer_consumer.py` | raw `queue.Queue` + `threading.Thread`, the four-phase lifecycle (spin up → enqueue → `q.join()` → pills + reap) | Concept 2 |
+| `02_worker_pool.py` | same lifecycle wrapped in a context manager (`__enter__`/`__exit__`) | Concept 2 (variant) |
+| `03_check_then_act_race.py` | break a counter with no lock, watch it lose increments, then fix it | Concept 3 |
+| `04_recursive_enqueue.py` | workers that `q.put()` more work — the crawler's shape in miniature | Concept 4 + 3 |
+| `05_thread_pool_executor.py` | `submit`/`result`/`as_completed`/`map` for a fixed batch, then the futures-tracking loop for recursive work | Concept 2 (variant) + 4 |
+
+**Readiness bar:** when you can write `01` from a blank screen in under 5 minutes, attempt `solution.py`. Not before.
 
 ---
 
