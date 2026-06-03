@@ -368,7 +368,28 @@ with ThreadPoolExecutor(max_workers=N) as ex:
 
 `wait(set, return_when=FIRST_COMPLETED)` returns `(done, not_done)`. Re-bind `inflight` to `not_done`, process the `done` ones (which may submit new futures), loop. Termination is `while inflight:` — when the set empties, all reachable work is finished. No poison pills; the `with` exit reaps the pool.
 
-**Why the lock does NOT go away:** the executor manages *threads*, not *your shared state*. `visited`/`seen` still races exactly as in Concept 3. The executor saves you the pool plumbing — it does nothing for correctness on shared data. Candidates who think "I used the safe library pool, so I don't need a lock" ship the double-fetch bug.
+**`return_when` has three values — pick the one that matches your loop's intent:**
+
+| Value | `wait()` unblocks when... | When to reach for it |
+|-------|----------------------------|----------------------|
+| `FIRST_COMPLETED` | *any one* future finishes (success, raise, or cancel) | dynamic / recursive loops — process whatever's ready, resubmit immediately, keep the pool saturated |
+| `FIRST_EXCEPTION` | any future *raises* — else falls back to ALL_COMPLETED | fail-fast: abort the batch the moment something errors |
+| `ALL_COMPLETED` *(default)* | every future is finished | "give me everything, blocking until done" — equivalent to `.result()` on each in sequence |
+
+The return is always `(done, not_done)` — a partition of the input set. With `FIRST_COMPLETED`, `done` may contain **more than one** Future (multiple finishing between calls is normal) — that's why the inner loop iterates `for fut in done:` rather than unwrapping a single value.
+
+Picking `ALL_COMPLETED` inside the `while` loop would defeat the whole point: you'd wait for the *entire* current batch before submitting any new work, leaving workers idle on the slowest task. `FIRST_COMPLETED` is what keeps the pool saturated.
+
+**Whether the lock survives depends on *where* you mutate state — and this is the senior insight worth nailing.** The executor manages threads, not your shared state, so by default `visited` races exactly as in Concept 3 — but only if multiple threads touch it. Two architectures, two different answers:
+
+| Architecture | Who mutates `visited` | Lock needed? |
+|--------------|------------------------|--------------|
+| Workers themselves check-and-add (queue+threads, or executor with workers that mutate state) | N worker threads | **Yes** — classic check-then-act race |
+| Workers are pure (just compute & return); main thread mutates after `wait()` returns | one thread (main) | **No** — no concurrent access, nothing to race |
+
+In the futures-tracking shape from drill 05, **the second architecture is what you actually wrote**: workers run `fetch_children(url)` and return; the main thread, single-threaded, reads results and mutates `visited`/`inflight` after `wait()` returns. No lock is required.
+
+The lesson isn't "the lock goes away because executor"; it's that **the lock requirement is structural** — decided by which threads touch shared state, not by which concurrency API you picked. Candidates who think "I used the safe library pool, so I don't need a lock" without that reasoning ship the double-fetch bug. Candidates who can articulate "workers are pure here, main thread is the single mutator, no lock needed" sound senior. Be the second.
 
 **The deadlock to never write:** don't block on a Future (`.result()`) from *inside* a task running in the same bounded pool, when the thing you're waiting on itself needs a free worker. All workers can end up blocked waiting for tasks that can't be scheduled because all workers are blocked. The crawler is safe because you submit-and-return (you never `.result()` inside a task) — but know the trap, it's a classic follow-up.
 
@@ -376,7 +397,88 @@ with ThreadPoolExecutor(max_workers=N) as ex:
 
 **`map` vs `submit` in one line:** `map` when the work is a clean function over a list and you want input-ordered results; `submit` when you need the Futures themselves (to `as_completed`, to track in a set, to cancel, or because the work is dynamic).
 
-**Done when:** you can take your queue+pills crawler and rewrite it with `ThreadPoolExecutor` + the `wait` loop, and articulate what got simpler (no pills, no manual join, no `task_done`) and what did NOT (the `visited` lock is still mandatory).
+**`ex.map` with multiple iterables — the API contract:** `ex.map(fn, iter1, iter2, ..., iterN)` calls `fn(iter1[i], iter2[i], ..., iterN[i])` for each `i`. So **N iterables → `fn` must accept N positional args**, they're zipped together, and **iteration stops at the shortest** (like the builtin `zip`, not `zip_longest`) — no error on length mismatch.
+
+```python
+# 1. Two parallel lists -> just works.
+ex.map(slow_square, [0,1,2], [1,2,3])    # fn(0,1), fn(1,2), fn(2,3)
+
+# 2. List of tuples + fn takes multiple args -> unpack with a lambda,
+#    or unzip with *zip(*pairs).
+pairs = [(0,1), (1,2), (2,3)]
+ex.map(lambda t: fn(*t), pairs)
+ex.map(fn, *zip(*pairs))                  # equivalent; materializes the unzip
+
+# 3. One varying arg + a constant -> functools.partial.
+from functools import partial
+ex.map(partial(fetch, timeout=5), urls)   # fn(url, timeout=5) per url
+
+# 4. Need real kwargs per call -> can't use map. Use submit.
+futs = [ex.submit(fn, **kwargs) for kwargs in list_of_dicts]
+```
+
+Three gotchas to burn in:
+- **Silent truncation.** `ex.map(fn, range(10), range(5))` runs 5 tasks, not 10. For a hard fail on mismatch, materialize via `zip(strict=True)` (3.10+) before passing — at the cost of laziness.
+- **Generators are single-shot.** A generator passed to `map` is consumed; don't pass the same generator into two slots, and don't reuse one after `map` has drained it.
+- **`map` is positional only.** A keyword-only function (`fn(*, x, y)`) can't be called by `map` — wrap with a lambda or `partial`.
+
+**Quick reference — which API for which shape:** the four collection APIs split on two axes: *one Future vs many*, and *blocking vs non-blocking*.
+
+| API | Subject | Blocks? | Returns | Order |
+|-----|---------|---------|---------|-------|
+| `fut.result(timeout=None)` | one Future | YES (or `TimeoutError`) | the value, or **re-raises** | n/a |
+| `fut.done()` | one Future | no | `True`/`False` | n/a |
+| `as_completed(fs)` | a fixed set | YES (generator) | yields each Future | **completion order** |
+| `wait(fs, return_when=...)` | a fixed set | YES | `(done, not_done)` | n/a (sets) |
+
+Plus two lesser-used: `fut.exception()` (block; return the exception object instead of re-raising), `fut.add_done_callback(cb)` (no blocking; `cb(fut)` runs on the worker that completed it).
+
+| Situation | Reach for |
+|-----------|-----------|
+| "One Future, I need its answer now" | `fut.result()` |
+| "One Future, just peek without blocking" | `fut.done()` |
+| Fixed batch, process each ASAP (any order) | `for fut in as_completed(fs): fut.result()` |
+| Fixed batch, results in input order | `list(ex.map(fn, items))` or `[fut.result() for fut in fs]` |
+| Fixed batch, wait for all then bulk-process | `done, _ = wait(fs)` (defaults to `ALL_COMPLETED`) |
+| Fail-fast — abort on first exception | `wait(fs, return_when=FIRST_EXCEPTION)` |
+| Dynamic / recursive, streaming as work surfaces | `wait(fs, return_when=FIRST_COMPLETED)` in a loop |
+| Per-level dynamic (BFS, ordered) | per-level `ex.map(fn, frontier)` — no `wait` |
+| Event-driven (don't block at all) | `fut.add_done_callback(cb)` |
+| Bounded wait — give up after N seconds | `wait(fs, timeout=N)` or `fut.result(timeout=N)` |
+
+The five recipes you'll write most often:
+
+```python
+# 1. Collect all, react fastest-first (any order)
+results = [fut.result() for fut in as_completed(futures)]
+
+# 2. Collect all, input order
+results = list(ex.map(fn, items))                           # or [fut.result() for fut in futures]
+
+# 3. Fail-fast: abort on first exception, cancel the rest
+done, not_done = wait(futures, return_when=FIRST_EXCEPTION)
+for fut in not_done: fut.cancel()
+for fut in done: fut.result()                                # raises if one of these was the failure
+
+# 4. Dynamic streaming (max throughput; the crawler shape)
+in_flight = {ex.submit(fn, x) for x in initial}
+while in_flight:
+    done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+    for fut in done:
+        for new in fut.result():
+            in_flight.add(ex.submit(fn, new))
+
+# 5. Bounded wait
+done, not_done = wait(futures, timeout=10)                  # not_done = whatever didn't finish in 10s
+```
+
+Two gotchas to burn in:
+- **`fut.result()` re-raises the task's exception** — and if you never call `.result()` *or* `.exception()`, the exception is silently swallowed. Fire-and-forget tasks that throw fail invisibly.
+- **`as_completed` is a one-shot generator over a captured set.** Adding futures to that set after `as_completed` started iterating: **they won't appear.** That's why dynamic streaming uses `wait` in a loop, not `as_completed`.
+
+The one-line carry: **`result` = "give me the answer," `done` = "peek," `as_completed` = "stream a fixed batch," `wait` = "block on a group condition."** Pick by question, not by habit.
+
+**Done when:** you can take your queue+pills crawler and rewrite it with `ThreadPoolExecutor` + the `wait` loop, and articulate what got simpler (no pills, no manual join, no `task_done`) AND that — in the main-thread-orchestration shape where workers are pure — **the lock goes away too**, because there's only one thread mutating `visited`.
 
 ---
 

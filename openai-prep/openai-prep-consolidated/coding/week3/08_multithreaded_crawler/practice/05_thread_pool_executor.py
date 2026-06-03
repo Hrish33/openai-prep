@@ -29,17 +29,20 @@ Expected output when working:
 
 import time
 import threading
+from asyncio import ALL_COMPLETED
+from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
+from random import randint
 
 
 # ---------------------------------------------------------------------------
 # PART A — fixed batch of independent work
 # ---------------------------------------------------------------------------
 
-def slow_square(n: int) -> int:
+def slow_square(n: int, m) -> int:
     """Simulates an I/O-bound task (sleep releases the GIL)."""
-    time.sleep(0.1)
-    return n * n
+    time.sleep(0.1 * randint(1, 10))
+    return n * m
 
 
 def part_a_submit() -> list[int]:
@@ -54,9 +57,13 @@ def part_a_submit() -> list[int]:
             for fut in as_completed(futures):
                 ... fut.result() ...
     """
-    # TODO: implement (~6 lines). Return the collected results sorted.
-    raise NotImplementedError
-
+    res = []
+    with ThreadPoolExecutor(max_workers=4) as exec:
+        futures = [exec.submit(slow_square, i, i + 1) for i in range(10)]
+        for future in as_completed(futures):
+            print(future.result())
+            res.append(future.result())
+    return res
 
 def part_a_map() -> list[int]:
     """
@@ -64,15 +71,13 @@ def part_a_map() -> list[int]:
     ex.map returns results in INPUT order (not completion order) and
     re-raises any exception when you iterate. Return list(...) of it.
     """
-    # TODO: implement (~3 lines)
-    raise NotImplementedError
-
-
+    with ThreadPoolExecutor(max_workers=4) as exec:
+        return list(exec.map(slow_square, range(10), range(1, 11)))
 # ---------------------------------------------------------------------------
 # PART B — dynamic / recursive work (the crawler shape)
 # ---------------------------------------------------------------------------
 
-THRESHOLD = 1000
+THRESHOLD = 100000
 
 
 def fetch_children(n: int) -> list[int]:
@@ -92,30 +97,29 @@ def crawl_with_executor(root: int) -> set[int]:
     Each fetch_children() call reveals new nodes to crawl. So you can't
     map() — you track in-flight futures and keep draining as new ones appear.
 
-    The pattern:
-        visited = {root}
-        lock = threading.Lock()         # guards visited check-then-act
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            in_flight = {ex.submit(fetch_children, root)}
-            while in_flight:
-                done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
-                for fut in done:
-                    for child in fut.result():
-                        with lock:                  # check-then-act, same as 03/04
-                            if child in visited:
-                                continue
-                            visited.add(child)
-                        in_flight.add(ex.submit(fetch_children, child))   # OUTSIDE lock
-        return visited
-
     Note what replaced what:
       - queue.Queue      -> the in_flight set of futures
       - q.join()         -> `while in_flight:` (loop until none pending)
       - poison pills      -> nothing! `with` exit joins the pool for you
       - q.get()/task_done -> wait(..., FIRST_COMPLETED)
     """
-    # TODO: implement (~12 lines) following the shape above.
-    raise NotImplementedError
+    visited = set()
+    in_flight = set()
+    lock = threading.Lock()
+    with ThreadPoolExecutor(max_workers=5) as exec:
+        visited.add(root)
+        in_flight.add(exec.submit(fetch_children, root))
+        while in_flight:
+            done, in_flight = wait(in_flight, return_when=ALL_COMPLETED)
+            for fut in done:
+                for child in fut.result():
+                    with lock:
+                        if child in visited:
+                            continue
+                        visited.add(child)
+                    in_flight.add(exec.submit(fetch_children, child))
+    return visited
+
 
 
 # ---------------------------------------------------------------------------
