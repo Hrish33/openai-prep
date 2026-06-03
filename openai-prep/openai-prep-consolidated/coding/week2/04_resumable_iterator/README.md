@@ -1,16 +1,24 @@
 # Problem 4: Resumable Iterator
 
-**Status:** Not yet scaffolded. Tell Claude Code "scaffold problem 4" when you're ready.
+**Status:** Scaffolded. Work the files in order.
 
-**One-liner:** Create an iterator that can pause and resume across multiple calls, maintaining state.
+**One-liner:** Build an iterator that walks a list of sources in order and exposes JSON-serializable `get_state` / `set_state` so iteration can be paused and resumed across processes.
 
-**Source:** [HelloInterview community question](https://www.hellointerview.com/community/questions/resumable-iterator/cmbskz7ck004r07ad6f1jxlni)
+**Source:** [HelloInterview community question](https://www.hellointerview.com/community/questions/resumable-iterator/cmbskz7ck004r07ad6f1jxlni) — reported variant uses `async`; this scaffold uses sync for the base and lists async as the primary follow-up.
 
-**Key concept:** the Python iterator protocol (`__iter__`, `__next__`, `StopIteration`)
+**Key concept:** Python iterator protocol (`__iter__`, `__next__`, `StopIteration`) + state design for serialization.
 
-**Likely prereqs:**
-- **This is a Python-internals problem.** No LC primer — instead, read the local concept guide: `coding/concepts/iterators.md` (to be generated when you reach this problem).
-- After reading the guide, practice writing iterators from scratch: a `Range`, a `Fibonacci`, a `ChunkedReader`.
-- Then `__getstate__`/`__setstate__` for the "resumable across calls" requirement — what does it mean to pause and resume? The iterator's state has to be re-creatable.
+## Files
 
-**When to do this:** week 2. This is the load-bearing Python skill OpenAI tests directly. Don't skip the concept guide.
+| File | When to read |
+|------|--------------|
+| `00_prereqs.md` | First. 2-3 hours of iterator-protocol + state-design foundation. Read `coding/concepts/iterators.md` along the way. |
+| `practice/` | Five TODO-marker drills (`01_counter.py` → `05_resumable_range.py`) that build the protocol muscle before assembly. |
+| `problem.md` | Once prereqs feel solid AND drills run clean. The actual interview problem. |
+| `solution.py` | Empty starter — fill in. State shape is yours to design. |
+| `test_solution.py` | `pytest test_solution.py -v`. Covers cross-boundary resume and JSON round-trip. |
+| `interviewer_notes.md` | **After** your attempt. Reference solution, async/pickle/file follow-ups, grading rubric, common mistakes. |
+
+## When to do this
+
+Week 2. **Don't skip the concept guide** — this problem is a thin shell around the iterator protocol, and missing the state-design articulation is the #1 way to under-perform on a base you "got working."
