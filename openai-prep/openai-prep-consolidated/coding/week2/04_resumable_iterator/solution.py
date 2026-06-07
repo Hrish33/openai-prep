@@ -21,7 +21,7 @@ a state dict that's literally:
 plus whatever you need for the per-source independent-state follow-up.
 """
 
-from typing import Iterable, TypeVar, List
+from typing import Iterable, TypeVar, List, AsyncIterable
 
 T = TypeVar("T")
 
@@ -37,11 +37,38 @@ class CompositeIterator:
     def __next__(self):
         source_index = self.state["source_index"]
         index = self.state["index"]
+
         while source_index < len(self.sources) and index >= len(self.sources[source_index]) :
             source_index += 1
             index = 0
         if source_index >= len(self.sources):
             raise StopIteration
+        ele = self.sources[source_index][index]
+        self.state= {"source_index" : source_index, "index" : index + 1 }
+        return ele
+
+    def get_state(self):
+        return self.state.copy()
+
+    def set_state(self, state):
+        self.state = state.copy()
+
+class AsyncCompositeIterator:
+    def __init__(self, sources : List[AsyncIterable[T]]):
+        self.sources = sources
+        self.state= {"source_index" : 0, "index" : 0 }
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        source_index = self.state["source_index"]
+        index = self.state["index"]
+        while source_index < len(self.sources) and index >= len(self.sources[source_index]) :
+            source_index += 1
+            index = 0
+        if source_index >= len(self.sources):
+            raise StopAsyncIteration
         ele = self.sources[source_index][index]
         self.state= {"source_index" : source_index, "index" : index + 1 }
         return ele

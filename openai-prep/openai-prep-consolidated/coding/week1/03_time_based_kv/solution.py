@@ -15,20 +15,24 @@ sense to you):
 Reach for `bisect` from the stdlib. Do NOT linear-scan in `get`.
 """
 
-import bisect  # noqa: F401  (you'll want this in get)
+import bisect
+import collections
 
 
 class TimeMap:
     def __init__(self) -> None:
-        # your code here
-        raise NotImplementedError
+        self._times = collections.defaultdict(list)
+        self._values = collections.defaultdict(list)
 
     def set(self, key: str, value: str, timestamp: int) -> None:
-        # your code here
-        raise NotImplementedError
+        self._times[key].append(timestamp)
+        self._values[key].append(value)
 
     def get(self, key: str, timestamp: int) -> str:
-        # return the value at the largest stored timestamp <= timestamp,
-        # or "" if there is none
-        # your code here
-        raise NotImplementedError
+        times = self._times.get(key)
+        if not times:
+            return ""
+        index = bisect.bisect_right(times, timestamp) - 1
+        if index < 0:
+            return ""
+        return self._values[key][index]

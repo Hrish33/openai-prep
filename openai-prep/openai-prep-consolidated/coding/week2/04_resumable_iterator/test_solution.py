@@ -197,3 +197,8 @@ def test_set_state_replaces_position():
     fresh = CompositeIterator(sources).get_state()
     it.set_state(fresh)
     assert next(it) == "a"
+
+
+
+# test async iterator
+

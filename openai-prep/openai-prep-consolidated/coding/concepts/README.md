@@ -16,10 +16,10 @@ These will be generated as you need them:
 
 | Guide | Needed for | Status |
 |-------|-----------|--------|
-| [`iterators.md`](iterators.md) | Problem 4 (Resumable Iterator) | **Generated** — read alongside `week2/04_resumable_iterator/00_prereqs.md` |
+| [`iterators.md`](iterators.md) | Problem 4 (Resumable Iterator) | **Generated** — read alongside `week2/04_resumable_iterator/00_prereqs.md`. Generator drills at [`practice/generators/`](practice/generators/) (5 files). |
 | `parsing.md` | Problem 7 (In-Memory SQL) | Not yet generated |
 | `threading.md` | Problem 8 (Multithreaded Crawler) | **Done via drills** — `week3/08_multithreaded_crawler/practice/01–05.py` plus the prereqs doc cover the same material end-to-end. No separate guide planned. |
-| [`asyncio.md`](asyncio.md) | Problem 4 (async follow-up), Problem 8 alt + general | **Generated** — sections 1–4 are self-contained for Problem 4's async follow-up; 5–7 for Problem 8 |
+| [`asyncio.md`](asyncio.md) | Problem 4 (async follow-up), Problem 8 alt + general | **Generated** — sections 1–4 self-contained for Problem 4's async follow-up; 5–7 for Problem 8. Drills at [`practice/asyncio/`](practice/asyncio/) (6 files). |
 | `generators.md` | Generally useful, may apply to several | Not yet generated |
 | `context_managers.md` | General Python depth | Not yet generated |
 | `dunder_methods.md` | General Python depth | Not yet generated |

@@ -1,6 +1,6 @@
 # Problem 2: KV Store Serialize/Deserialize
 
-**Status:** Not yet scaffolded. Tell Claude Code "scaffold problem 2" when you're ready.
+**Status:** Scaffolded. Start with `00_prereqs.md`, then `problem.md`. Reference lives in `interviewer_notes.md` (read after your attempt).
 
 **One-liner:** Implement serialization and deserialization for a key-value store where both keys and values can contain any characters including delimiters.
 
