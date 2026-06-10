@@ -1,6 +1,6 @@
 # Problem 5: Unix `cd` with Symbolic Link Resolution
 
-**Status:** Not yet scaffolded. Tell Claude Code "scaffold problem 5" when you're ready.
+**Status:** Scaffolded. Open `00_prereqs.md` to start; attempt in `solution.py`; reference in `interviewer_notes.md`.
 
 **One-liner:** Implement `cd` command logic: handle `.`, `..`, absolute paths, symbolic links, and detect symlink cycles.
 

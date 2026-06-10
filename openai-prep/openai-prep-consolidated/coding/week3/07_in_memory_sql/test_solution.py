@@ -1,62 +1,61 @@
 """
-Tests for in-memory SQL database. Run:
+Tests for the in-memory SQL-like database (method-call API). Run:
   pytest coding/week3/07_in_memory_sql/test_solution.py -v
 
-If you wrote your own tests first (good!), compare against these afterward.
-The tests are structured by capability so you can see your progress as you
-implement each piece (CREATE -> INSERT -> SELECT -> WHERE -> errors).
+Tests are grouped by capability so you can watch progress as you implement:
+CREATE -> INSERT -> SELECT all -> SELECT projection -> SELECT where -> errors.
 """
 
 import pytest
 from solution import Database
 
 
-# ---- CREATE TABLE ----
+# ---- create_table ----
 
-def test_create_empty_table_then_select_returns_empty():
+def test_create_then_select_returns_empty():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
-    assert db.execute("SELECT * FROM users") == []
+    db.create_table("users", [("id", "INT"), ("name", "TEXT")])
+    assert db.select("users") == []
 
 
 def test_create_returns_none():
     db = Database()
-    result = db.execute("CREATE TABLE users (id INT, name TEXT)")
+    result = db.create_table("users", [("id", "INT")])
     assert result is None
 
 
-def test_create_with_multiple_columns():
+def test_create_multiple_independent_tables():
     db = Database()
-    db.execute("CREATE TABLE x (a INT, b TEXT, c INT, d TEXT)")
-    db.execute("INSERT INTO x VALUES (1, 'two', 3, 'four')")
-    assert db.execute("SELECT * FROM x") == [
-        {"a": 1, "b": "two", "c": 3, "d": "four"}
-    ]
+    db.create_table("a", [("x", "INT")])
+    db.create_table("b", [("y", "TEXT")])
+    db.insert("a", {"x": 1})
+    db.insert("b", {"y": "hello"})
+    assert db.select("a") == [{"x": 1}]
+    assert db.select("b") == [{"y": "hello"}]
 
 
-# ---- INSERT ----
+# ---- insert ----
 
 def test_insert_single_row():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice')")
-    assert db.execute("SELECT * FROM users") == [{"id": 1, "name": "Alice"}]
+    db.create_table("users", [("id", "INT"), ("name", "TEXT")])
+    db.insert("users", {"id": 1, "name": "Alice"})
+    assert db.select("users") == [{"id": 1, "name": "Alice"}]
 
 
 def test_insert_returns_none():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
-    assert db.execute("INSERT INTO users VALUES (1, 'Alice')") is None
+    db.create_table("users", [("id", "INT")])
+    assert db.insert("users", {"id": 1}) is None
 
 
-def test_insert_multiple_rows_preserves_order():
+def test_insert_preserves_order():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice')")
-    db.execute("INSERT INTO users VALUES (2, 'Bob')")
-    db.execute("INSERT INTO users VALUES (3, 'Charlie')")
-    rows = db.execute("SELECT * FROM users")
-    assert rows == [
+    db.create_table("users", [("id", "INT"), ("name", "TEXT")])
+    db.insert("users", {"id": 1, "name": "Alice"})
+    db.insert("users", {"id": 2, "name": "Bob"})
+    db.insert("users", {"id": 3, "name": "Charlie"})
+    assert db.select("users") == [
         {"id": 1, "name": "Alice"},
         {"id": 2, "name": "Bob"},
         {"id": 3, "name": "Charlie"},
@@ -65,36 +64,41 @@ def test_insert_multiple_rows_preserves_order():
 
 def test_insert_negative_integer():
     db = Database()
-    db.execute("CREATE TABLE x (n INT)")
-    db.execute("INSERT INTO x VALUES (-5)")
-    assert db.execute("SELECT * FROM x") == [{"n": -5}]
+    db.create_table("x", [("n", "INT")])
+    db.insert("x", {"n": -5})
+    assert db.select("x") == [{"n": -5}]
 
 
 def test_insert_string_with_spaces():
     db = Database()
-    db.execute("CREATE TABLE x (name TEXT)")
-    db.execute("INSERT INTO x VALUES ('hello world')")
-    assert db.execute("SELECT * FROM x") == [{"name": "hello world"}]
+    db.create_table("x", [("name", "TEXT")])
+    db.insert("x", {"name": "hello world"})
+    assert db.select("x") == [{"name": "hello world"}]
 
 
-# ---- SELECT * (no WHERE) ----
+# ---- select all rows ----
 
-def test_select_star_returns_all_columns():
+def test_select_returns_all_columns_by_default():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT, age INT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice', 30)")
-    assert db.execute("SELECT * FROM users") == [
-        {"id": 1, "name": "Alice", "age": 30}
-    ]
+    db.create_table("u", [("id", "INT"), ("name", "TEXT"), ("age", "INT")])
+    db.insert("u", {"id": 1, "name": "Alice", "age": 30})
+    assert db.select("u") == [{"id": 1, "name": "Alice", "age": 30}]
 
 
-def test_select_projected_columns():
+def test_select_from_empty_table():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT, age INT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice', 30)")
-    db.execute("INSERT INTO users VALUES (2, 'Bob', 25)")
-    rows = db.execute("SELECT name, age FROM users")
-    assert rows == [
+    db.create_table("u", [("id", "INT")])
+    assert db.select("u") == []
+
+
+# ---- select with projection ----
+
+def test_select_subset_of_columns():
+    db = Database()
+    db.create_table("u", [("id", "INT"), ("name", "TEXT"), ("age", "INT")])
+    db.insert("u", {"id": 1, "name": "Alice", "age": 30})
+    db.insert("u", {"id": 2, "name": "Bob", "age": 25})
+    assert db.select("u", columns=["name", "age"]) == [
         {"name": "Alice", "age": 30},
         {"name": "Bob", "age": 25},
     ]
@@ -102,232 +106,164 @@ def test_select_projected_columns():
 
 def test_select_one_column():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice')")
-    db.execute("INSERT INTO users VALUES (2, 'Bob')")
-    assert db.execute("SELECT name FROM users") == [
+    db.create_table("u", [("id", "INT"), ("name", "TEXT")])
+    db.insert("u", {"id": 1, "name": "Alice"})
+    db.insert("u", {"id": 2, "name": "Bob"})
+    assert db.select("u", columns=["name"]) == [
         {"name": "Alice"}, {"name": "Bob"}
     ]
 
 
-def test_select_column_order_in_projection():
-    """Projected columns should appear in the order they were requested."""
+def test_projection_respects_column_order():
+    """columns=['c', 'a'] should return dicts with c before a."""
     db = Database()
-    db.execute("CREATE TABLE x (a INT, b INT, c INT)")
-    db.execute("INSERT INTO x VALUES (1, 2, 3)")
-    rows = db.execute("SELECT c, a FROM x")
+    db.create_table("x", [("a", "INT"), ("b", "INT"), ("c", "INT")])
+    db.insert("x", {"a": 1, "b": 2, "c": 3})
+    rows = db.select("x", columns=["c", "a"])
     assert rows == [{"c": 3, "a": 1}]
+    # confirm key order in the actual dict
+    assert list(rows[0].keys()) == ["c", "a"]
 
 
-def test_select_from_empty_table():
-    db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
-    assert db.execute("SELECT * FROM users") == []
-
-
-# ---- SELECT with WHERE ----
+# ---- select with where ----
 
 def test_where_equality_on_int():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice')")
-    db.execute("INSERT INTO users VALUES (2, 'Bob')")
-    rows = db.execute("SELECT * FROM users WHERE id = 1")
-    assert rows == [{"id": 1, "name": "Alice"}]
-
-
-def test_where_equality_on_string():
-    db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice')")
-    db.execute("INSERT INTO users VALUES (2, 'Bob')")
-    rows = db.execute("SELECT * FROM users WHERE name = 'Bob'")
-    assert rows == [{"id": 2, "name": "Bob"}]
-
-
-def test_where_inequality():
-    db = Database()
-    db.execute("CREATE TABLE x (n INT)")
-    db.execute("INSERT INTO x VALUES (1)")
-    db.execute("INSERT INTO x VALUES (2)")
-    db.execute("INSERT INTO x VALUES (3)")
-    rows = db.execute("SELECT * FROM x WHERE n != 2")
-    assert rows == [{"n": 1}, {"n": 3}]
-
-
-def test_where_less_than():
-    db = Database()
-    db.execute("CREATE TABLE x (age INT)")
-    for v in [10, 20, 30, 40]:
-        db.execute(f"INSERT INTO x VALUES ({v})")
-    assert db.execute("SELECT * FROM x WHERE age < 30") == [{"age": 10}, {"age": 20}]
-
-
-def test_where_greater_than():
-    db = Database()
-    db.execute("CREATE TABLE x (age INT)")
-    for v in [10, 20, 30, 40]:
-        db.execute(f"INSERT INTO x VALUES ({v})")
-    assert db.execute("SELECT * FROM x WHERE age > 25") == [{"age": 30}, {"age": 40}]
-
-
-def test_where_less_than_or_equal():
-    db = Database()
-    db.execute("CREATE TABLE x (n INT)")
-    for v in [1, 2, 3]:
-        db.execute(f"INSERT INTO x VALUES ({v})")
-    assert db.execute("SELECT * FROM x WHERE n <= 2") == [{"n": 1}, {"n": 2}]
-
-
-def test_where_greater_than_or_equal():
-    db = Database()
-    db.execute("CREATE TABLE x (n INT)")
-    for v in [1, 2, 3]:
-        db.execute(f"INSERT INTO x VALUES ({v})")
-    assert db.execute("SELECT * FROM x WHERE n >= 2") == [{"n": 2}, {"n": 3}]
-
-
-def test_where_no_match_returns_empty():
-    db = Database()
-    db.execute("CREATE TABLE x (n INT)")
-    db.execute("INSERT INTO x VALUES (1)")
-    assert db.execute("SELECT * FROM x WHERE n > 100") == []
-
-
-def test_where_combined_with_projection():
-    db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT, age INT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice', 30)")
-    db.execute("INSERT INTO users VALUES (2, 'Bob', 25)")
-    db.execute("INSERT INTO users VALUES (3, 'Charlie', 35)")
-    rows = db.execute("SELECT name FROM users WHERE age > 25")
-    assert rows == [{"name": "Alice"}, {"name": "Charlie"}]
-
-
-# ---- Case sensitivity ----
-
-def test_keywords_are_case_insensitive():
-    db = Database()
-    db.execute("create table users (id int, name text)")
-    db.execute("insert into users values (1, 'Alice')")
-    assert db.execute("select * from users") == [{"id": 1, "name": "Alice"}]
-
-
-def test_mixed_case_keywords():
-    db = Database()
-    db.execute("Create Table users (id Int, name Text)")
-    db.execute("Insert Into users Values (1, 'Alice')")
-    assert db.execute("Select * From users Where id = 1") == [
+    db.create_table("u", [("id", "INT"), ("name", "TEXT")])
+    db.insert("u", {"id": 1, "name": "Alice"})
+    db.insert("u", {"id": 2, "name": "Bob"})
+    assert db.select("u", where=lambda r: r["id"] == 1) == [
         {"id": 1, "name": "Alice"}
     ]
 
 
-def test_identifiers_are_case_sensitive():
-    """Table 'users' and table 'Users' would be different (if both existed).
-    Here we just check that the lookup respects case."""
+def test_where_equality_on_string():
     db = Database()
-    db.execute("CREATE TABLE users (id INT)")
-    db.execute("INSERT INTO users VALUES (1)")
-    # 'Users' (capital U) is a different identifier — should error.
-    with pytest.raises(Exception):
-        db.execute("SELECT * FROM Users")
+    db.create_table("u", [("id", "INT"), ("name", "TEXT")])
+    db.insert("u", {"id": 1, "name": "Alice"})
+    db.insert("u", {"id": 2, "name": "Bob"})
+    assert db.select("u", where=lambda r: r["name"] == "Bob") == [
+        {"id": 2, "name": "Bob"}
+    ]
+
+
+def test_where_inequality():
+    db = Database()
+    db.create_table("x", [("n", "INT")])
+    for v in [1, 2, 3]:
+        db.insert("x", {"n": v})
+    assert db.select("x", where=lambda r: r["n"] != 2) == [{"n": 1}, {"n": 3}]
+
+
+def test_where_range():
+    db = Database()
+    db.create_table("x", [("age", "INT")])
+    for v in [10, 20, 30, 40]:
+        db.insert("x", {"age": v})
+    assert db.select("x", where=lambda r: r["age"] >= 20 and r["age"] < 40) == [
+        {"age": 20}, {"age": 30}
+    ]
+
+
+def test_where_composed_and():
+    """The AND/OR follow-up is free with callable predicates."""
+    db = Database()
+    db.create_table("u", [("name", "TEXT"), ("age", "INT")])
+    db.insert("u", {"name": "Alice", "age": 30})
+    db.insert("u", {"name": "Bob", "age": 25})
+    db.insert("u", {"name": "Carol", "age": 30})
+    rows = db.select("u", where=lambda r: r["age"] == 30 and r["name"] != "Carol")
+    assert rows == [{"name": "Alice", "age": 30}]
+
+
+def test_where_no_match_returns_empty():
+    db = Database()
+    db.create_table("x", [("n", "INT")])
+    db.insert("x", {"n": 1})
+    assert db.select("x", where=lambda r: r["n"] > 100) == []
+
+
+def test_where_combined_with_projection():
+    db = Database()
+    db.create_table("u", [("id", "INT"), ("name", "TEXT"), ("age", "INT")])
+    db.insert("u", {"id": 1, "name": "Alice", "age": 30})
+    db.insert("u", {"id": 2, "name": "Bob", "age": 25})
+    db.insert("u", {"id": 3, "name": "Charlie", "age": 35})
+    rows = db.select("u", columns=["name"], where=lambda r: r["age"] > 25)
+    assert rows == [{"name": "Alice"}, {"name": "Charlie"}]
 
 
 # ---- Errors ----
 
-def test_select_from_unknown_table_raises():
+def test_select_unknown_table_raises():
     db = Database()
     with pytest.raises(Exception):
-        db.execute("SELECT * FROM ghost")
+        db.select("ghost")
 
 
-def test_insert_into_unknown_table_raises():
+def test_insert_unknown_table_raises():
     db = Database()
     with pytest.raises(Exception):
-        db.execute("INSERT INTO ghost VALUES (1)")
+        db.insert("ghost", {"x": 1})
 
 
 def test_select_unknown_column_raises():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice')")
+    db.create_table("u", [("id", "INT")])
+    db.insert("u", {"id": 1})
     with pytest.raises(Exception):
-        db.execute("SELECT badcol FROM users")
+        db.select("u", columns=["badcol"])
 
 
-def test_where_on_unknown_column_raises():
+def test_insert_missing_column_raises():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice')")
+    db.create_table("u", [("id", "INT"), ("name", "TEXT")])
     with pytest.raises(Exception):
-        db.execute("SELECT * FROM users WHERE badcol = 1")
+        db.insert("u", {"id": 1})    # missing 'name'
 
 
-def test_insert_wrong_number_of_values_raises():
+def test_insert_extra_column_raises():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
+    db.create_table("u", [("id", "INT")])
     with pytest.raises(Exception):
-        db.execute("INSERT INTO users VALUES (1)")
+        db.insert("u", {"id": 1, "extra": "oops"})
 
 
-def test_insert_type_mismatch_raises():
-    """Inserting a string where INT is declared."""
+def test_insert_wrong_type_int_for_text_raises():
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT)")
+    db.create_table("u", [("name", "TEXT")])
     with pytest.raises(Exception):
-        db.execute("INSERT INTO users VALUES ('not_an_int', 'Alice')")
+        db.insert("u", {"name": 42})
 
 
-def test_unterminated_string_raises():
+def test_insert_wrong_type_string_for_int_raises():
     db = Database()
-    db.execute("CREATE TABLE x (s TEXT)")
+    db.create_table("u", [("id", "INT")])
     with pytest.raises(Exception):
-        db.execute("INSERT INTO x VALUES ('unterminated")
+        db.insert("u", {"id": "not_an_int"})
 
 
-def test_malformed_sql_raises():
-    db = Database()
-    with pytest.raises(Exception):
-        db.execute("SELECT FROM users")    # missing column list
-
-
-def test_malformed_create_raises():
-    db = Database()
-    with pytest.raises(Exception):
-        db.execute("CREATE TABLE users id INT")    # missing parens
-
-
-# ---- Integration / sequence ----
-
-def test_multiple_tables_independent():
-    db = Database()
-    db.execute("CREATE TABLE a (x INT)")
-    db.execute("CREATE TABLE b (y TEXT)")
-    db.execute("INSERT INTO a VALUES (1)")
-    db.execute("INSERT INTO b VALUES ('hello')")
-    assert db.execute("SELECT * FROM a") == [{"x": 1}]
-    assert db.execute("SELECT * FROM b") == [{"y": "hello"}]
-
+# ---- Integration ----
 
 def test_realistic_session():
-    """End-to-end: walk through the example from problem.md."""
+    """Walk through the example from problem.md end-to-end."""
     db = Database()
-    db.execute("CREATE TABLE users (id INT, name TEXT, age INT)")
-    db.execute("INSERT INTO users VALUES (1, 'Alice', 30)")
-    db.execute("INSERT INTO users VALUES (2, 'Bob', 25)")
-    db.execute("INSERT INTO users VALUES (3, 'Charlie', 35)")
+    db.create_table("users", [("id", "INT"), ("name", "TEXT"), ("age", "INT")])
+    db.insert("users", {"id": 1, "name": "Alice", "age": 30})
+    db.insert("users", {"id": 2, "name": "Bob", "age": 25})
+    db.insert("users", {"id": 3, "name": "Charlie", "age": 35})
 
-    assert db.execute("SELECT * FROM users") == [
+    assert db.select("users") == [
         {"id": 1, "name": "Alice", "age": 30},
         {"id": 2, "name": "Bob", "age": 25},
         {"id": 3, "name": "Charlie", "age": 35},
     ]
 
-    assert db.execute("SELECT name, age FROM users WHERE age > 25") == [
+    assert db.select("users", columns=["name", "age"], where=lambda r: r["age"] > 25) == [
         {"name": "Alice", "age": 30},
         {"name": "Charlie", "age": 35},
     ]
 
-    assert db.execute("SELECT * FROM users WHERE name = 'Bob'") == [
-        {"id": 2, "name": "Bob", "age": 25},
+    assert db.select("users", where=lambda r: r["name"] == "Bob") == [
+        {"id": 2, "name": "Bob", "age": 25}
     ]

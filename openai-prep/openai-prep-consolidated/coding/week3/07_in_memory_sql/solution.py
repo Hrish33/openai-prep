@@ -1,24 +1,22 @@
 """
-In-memory SQL database.
+In-memory SQL-like database, method-call API.
 
-Read 00_prereqs.md, then problem.md. Sketch your token types, AST classes,
-and the execute() dispatch BEFORE coding. Specifically decide:
-  - What stages does execute() go through?  (tokenize -> parse -> execute)
-  - What's the shape of your AST?            (CreateTable, Insert, Select)
-  - Where do errors come from at each stage?
+Read problem.md first. Sketch your storage layout, type-check logic, and
+select shape BEFORE coding. Specifically decide:
+  - How are tables stored?           (recommended: list[dict] per table)
+  - How is the schema stored?        (recommended: list of (name, type) tuples)
+  - Where does type checking live?   (insert path — fail fast)
+  - How does projection respect column order?
 
-Suggested structure (you don't have to follow this — design what makes
-sense to you):
-  - Tokenizer: str -> list[Token]
-  - Parser: list[Token] -> AST node (Create | Insert | Select)
-  - Executor: AST node + Database state -> result (None or list[dict])
-  - Database holds {table_name -> rows} and {table_name -> column schema}
+Suggested structure (deviate if you have a reason):
+  - self.tables:  dict[str, list[dict]]            — table name -> rows
+  - self.schemas: dict[str, list[tuple[str, str]]] — table name -> [(col, type), ...]
 
-DO NOT use eval() or exec() to evaluate WHERE. The whole point of this
-problem is implementing the SQL pipeline yourself.
+The `where` argument to select is a Python callable. You don't parse it;
+you call it. Predicate composition (AND/OR) is the caller's job.
 """
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 
 class Database:
@@ -26,6 +24,24 @@ class Database:
         # your code here
         raise NotImplementedError
 
-    def execute(self, sql: str) -> Optional[list[dict[str, Any]]]:
+    def create_table(self, name: str, schema: list[tuple[str, str]]) -> None:
+        """schema is [(col_name, col_type), ...]. Types: 'INT', 'TEXT'."""
+        # your code here
+        raise NotImplementedError
+
+    def insert(self, table: str, row: dict[str, Any]) -> None:
+        """Row must match the schema exactly (no missing, no extras, types correct)."""
+        # your code here
+        raise NotImplementedError
+
+    def select(
+        self,
+        table: str,
+        columns: Optional[list[str]] = None,
+        where: Optional[Callable[[dict[str, Any]], bool]] = None,
+    ) -> list[dict[str, Any]]:
+        """columns=None -> all columns (in schema order).
+        where=None    -> all rows.
+        Projected dicts respect the order in `columns`."""
         # your code here
         raise NotImplementedError

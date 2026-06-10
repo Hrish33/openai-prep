@@ -1,130 +1,111 @@
-# Problem 7: In-Memory Database with SQL Operations
+# Problem 7: In-Memory SQL-Like Database (Method API)
 
-**Prereqs:** Work through `00_prereqs.md` first. This problem will eat 90 minutes if you skip prep.
+**Prereqs:** Skim `00_prereqs.md`. Lighter than the full SQL-parsing version — no tokenizer, no parser.
 
-**Time budget:** 75–90 minutes
-**Source:** Reported by multiple OpenAI candidates (HelloInterview community thread)
+**Time budget:** 45–60 minutes for base. 75–90 with follow-ups discussed.
+**Source:** Reported by OpenAI candidates. This is the method-call variant of the "in-memory SQL" problem family. The SQL-string-parsing variant is a layered follow-up.
 
 ## Problem
 
-Implement an in-memory database that accepts SQL-like statements as strings. Support `CREATE TABLE`, `INSERT INTO`, and `SELECT` with a single-condition `WHERE`. Tokenize, parse, and execute — no `eval()`.
+Implement an in-memory database with table-creation, row-insertion, and row-selection. The API is **method calls, not parsed SQL strings.** This strips out the lexer/parser and lets you focus on storage design, predicate composition, and type checking.
 
 ```python
 db = Database()
 
-db.execute("CREATE TABLE users (id INT, name TEXT, age INT)")
-db.execute("INSERT INTO users VALUES (1, 'Alice', 30)")
-db.execute("INSERT INTO users VALUES (2, 'Bob', 25)")
-db.execute("INSERT INTO users VALUES (3, 'Charlie', 35)")
+db.create_table("users", [("id", "INT"), ("name", "TEXT"), ("age", "INT")])
 
-db.execute("SELECT * FROM users")
+db.insert("users", {"id": 1, "name": "Alice", "age": 30})
+db.insert("users", {"id": 2, "name": "Bob",   "age": 25})
+db.insert("users", {"id": 3, "name": "Charlie", "age": 35})
+
+db.select("users")
 # [{"id": 1, "name": "Alice", "age": 30},
-#  {"id": 2, "name": "Bob", "age": 25},
+#  {"id": 2, "name": "Bob",   "age": 25},
 #  {"id": 3, "name": "Charlie", "age": 35}]
 
-db.execute("SELECT name, age FROM users WHERE age > 25")
+db.select("users", columns=["name", "age"])
 # [{"name": "Alice", "age": 30},
+#  {"name": "Bob",   "age": 25},
 #  {"name": "Charlie", "age": 35}]
 
-db.execute("SELECT * FROM users WHERE name = 'Bob'")
-# [{"id": 2, "name": "Bob", "age": 25}]
+db.select("users", where=lambda row: row["age"] > 25)
+# [{"id": 1, "name": "Alice", "age": 30},
+#  {"id": 3, "name": "Charlie", "age": 35}]
+
+db.select("users", columns=["name"], where=lambda row: row["name"] == "Bob")
+# [{"name": "Bob"}]
 ```
 
 ## Required API
 
-- `Database()` — constructor, no args
-- `execute(sql: str)` — returns:
-  - `list[dict]` for `SELECT` (empty list if no rows match)
-  - `None` for `CREATE TABLE` and `INSERT INTO`
-
-## Required SQL subset
-
-**CREATE TABLE:**
-```sql
-CREATE TABLE <name> (<col> <type>, <col> <type>, ...)
-```
-- Types: `INT`, `TEXT`
-- Column names are case-sensitive; SQL keywords are case-insensitive
-
-**INSERT INTO (positional):**
-```sql
-INSERT INTO <table> VALUES (<value>, <value>, ...)
-```
-- Number of values must match number of columns; type must match.
-- Integer literals: `42`, `-7`.
-- String literals: `'Alice'` (single quotes). No escape handling needed for base.
-
-**SELECT:**
-```sql
-SELECT * FROM <table>
-SELECT <col>, <col> FROM <table>
-SELECT * FROM <table> WHERE <col> <op> <value>
-```
-- `<op>` ∈ `{=, !=, <, >, <=, >=}`
-- Single WHERE condition for base. No AND/OR yet.
+- `Database()` — constructor, no args.
+- `create_table(name: str, schema: list[tuple[str, str]])` — schema is `[(col_name, col_type), ...]`. Types: `"INT"` and `"TEXT"`. Returns `None`.
+- `insert(table: str, row: dict[str, Any])` — row must have exactly the schema's columns (no missing, no extras), and each value must match its declared type. Returns `None`.
+- `select(table: str, columns: list[str] | None = None, where: Callable[[dict], bool] | None = None)` — returns `list[dict]`. `columns=None` means all columns; `where=None` means all rows.
 
 ## Requirements
 
-- **Tokenize → Parse → Execute** as distinct stages. The executor must not see raw strings.
-- **No `eval()` or `exec()`.** WHERE evaluation must walk your AST.
-- **Case-insensitive keywords, case-sensitive identifiers.** `select * from Users` works; `SELECT * FROM users` returns nothing if the table is `Users`.
-- **Type checking on INSERT.** Inserting a string where an INT is declared raises an error before the row is added.
-- **Unknown table / column raises an error** at execute time (not parse time — parser doesn't know about your tables).
+- **Storage layout is your call.** List-of-dicts is the recommended default. Be ready to defend it vs columnar.
+- **Type checking on `insert`.** Inserting a string where an `INT` is declared raises. Inserting an int where a `TEXT` is declared raises.
+- **Schema check on `insert`.** Missing column or extra column raises.
+- **Column check on `select`.** Unknown column in `columns=[...]` raises.
+- **Unknown table raises** on any operation.
+- **Predicate is a callable.** The interviewer hands you the WHERE filter as a Python lambda. You apply it; you don't parse it. This is deliberate — the parsing layer is a follow-up.
+- **`columns` controls projection order.** `columns=["c", "a"]` returns dicts with `c` before `a`.
+- **Insertion order is preserved** in `select` (no implicit sorting).
 
 ## Error contract
 
-Pick one error class and use it consistently for SQL errors. (Real DBs distinguish syntax errors from semantic errors; for the interview, one custom exception is fine — but be ready to defend the choice.)
-
-| Condition | When detected | Error |
+| Condition | Detected during | Error |
 |---|---|---|
-| Unterminated string literal | tokenize | raise |
-| Unexpected/missing token | parse | raise |
-| Unknown table | execute | raise |
-| Unknown column | execute | raise |
-| Type mismatch on INSERT | execute | raise |
-| Wrong number of values on INSERT | execute | raise |
+| Unknown table | any op | raise |
+| Insert with wrong column set | insert | raise |
+| Insert with wrong type | insert | raise |
+| Unknown column in projection | select | raise |
+
+Pick one custom exception (e.g., `DatabaseError`) and use it consistently. Be ready to defend the choice — real DBs distinguish many error types; for the interview, one is fine.
 
 ## What an OpenAI interviewer is looking for
 
-1. **The pipeline is obvious from the code structure.** A reader should be able to find your tokenizer, parser, and executor in seconds.
-2. **AST is real.** `Select(columns=['name'], table='users', where=Where('age', '>', 25))` — actual objects, not nested dicts.
-3. **No `eval()`.** Show that you understand `eval()` defeats the purpose of writing the SQL implementation, and is a security hole on top.
-4. **Edge cases enumerated up front:** empty result set, no WHERE clause, `SELECT *`, missing table/column, type mismatch. Mention these *before* you start coding.
-5. **Layered optimization.** Base: scan-all on every SELECT. Follow-up: index on primary key, predicate on indexed column. Don't volunteer this until base works — but be ready when they ask.
+1. **Data-structure design is obvious.** Reader should see `tables: dict[str, list[dict]]` and `schemas: dict[str, list[Column]]` (or similar) and immediately understand the layout.
+2. **Type check is real, not a `# TODO`.** Each `(col_name, col_type, value)` triple gets validated on insert, with a clean error.
+3. **Predicate-as-callable.** The `where` lambda is just `[row for row in table if where(row)]`. No reinvention.
+4. **Projection respects requested order.** `columns=["c", "a"]` — interviewers test this.
+5. **Edge cases enumerated up front:** empty result, `where=None`, `columns=None`, missing table/column, type mismatch, insert with missing keys.
+6. **Layered optimization.** Base: scan-all on every `select`. Follow-up: `create_index(table, column)` for equality lookups. Don't volunteer this until base works.
 
 ## Follow-ups (don't peek until base works)
 
 <details>
 <summary>Click to expand</summary>
 
-1. **AND / OR in WHERE.** `WHERE age > 25 AND name = 'Alice'`. Parser change: precedence (OR is lower than AND); executor change: predicates compose with `and`/`or`.
+1. **Predicate composition.** "Add AND / OR for WHERE." Since `where` is already a callable, compose them client-side: `where=lambda r: r["age"] > 25 and r["name"] == "Alice"`. The fact that *no API change is needed* is the lesson — this is the upside of the callable design.
 
-2. **DELETE / UPDATE.** `DELETE FROM users WHERE id = 1`; `UPDATE users SET age = 31 WHERE name = 'Alice'`. Same pipeline, two new statement types.
+2. **`delete` and `update`.** `db.delete("users", where=...)` and `db.update("users", {"age": 31}, where=...)`. Same predicate pattern.
 
-3. **Indexes.** `CREATE INDEX idx_age ON users (age)`. SELECT with predicate on indexed column uses the index instead of scanning. When does the index help, and when does it hurt?
+3. **Indexes.** `db.create_index("users", "age")` builds `dict[value -> list[row_id]]`. The challenge: `select` with `where=lambda r: r["age"] == 30` has no way to know about the index — the lambda is opaque. So the follow-up forces a richer predicate API: `where={"age": ("=", 30)}` or a small AST. Discuss the trade-off; you don't have to implement it.
 
-4. **ORDER BY / LIMIT.** `SELECT * FROM users ORDER BY age DESC LIMIT 10`. Stable sort. What's the time complexity?
+4. **`order_by` and `limit`.** `db.select("users", order_by="age", desc=True, limit=10)`. Stable sort. What's the time complexity?
 
-5. **JOIN.** `SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id`. Nested-loop join first; mention hash join as the optimization.
+5. **`join`.** `db.join("users", "orders", on=lambda u, o: u["id"] == o["user_id"])`. Nested-loop join first; mention hash join.
 
 6. **Persistence.** Survive process restart. Serialize tables to JSON on every write? Use a write-ahead log? Discuss durability vs throughput.
 
-7. **Concurrency.** Two threads call `execute` simultaneously. Reader/writer lock per table? MVCC? What guarantees do you provide?
+7. **Concurrency.** Two threads call `insert` simultaneously. Single global `threading.Lock`? Per-table reader/writer lock? What guarantees do you provide? (You'll get asked this — be ready.)
 
-8. **Aggregates.** `SELECT COUNT(*), AVG(age) FROM users`. Doesn't fit the "row dict" output shape — what changes?
-
-9. **Subqueries.** `SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)`. Now the parser needs recursive statement parsing. Big refactor or natural extension?
+8. **The SQL-string layer.** "Now accept SQL strings: `db.execute('SELECT * FROM users WHERE age > 25')`." This is the *full* parser variant. Sketch: tokenizer → recursive-descent parser → AST → translate WHERE-AST into a predicate lambda → call your existing `select`. The whole thing is a **wrapper around the method API you already built.** That framing is the key insight.
 
 </details>
 
 ## Honest difficulty note
 
-This is the **largest problem in the set.** Expect to spend the full 90 minutes on your first attempt and not finish all follow-ups. A passing performance is:
+Base (CREATE + INSERT + SELECT with all three knobs) is genuinely **45–60 min** for someone with the prereq concepts loaded. If you're spending 40 min on storage layout, you've over-thought it — `dict[str, list[dict]]` and move on.
 
-- CREATE + INSERT + SELECT-without-WHERE working end-to-end (~30 min)
-- SELECT with single WHERE working (~50 min)
-- Articulated path to AND/OR and DELETE, even if not implemented
+A strong attempt covers:
+- All three methods working (~30 min)
+- Type/schema checking on insert + column check on select (~10 min)
+- Projection respects order (~5 min)
+- Predicate works with combined `columns` + `where` (~5 min)
+- Articulated path to: predicate composition (already free), index (with API trade-off), and the SQL-string layer as a wrapper
 
-Don't get stuck on the tokenizer for 30 minutes. If you're not done with tokenization in 15, fall back to a simpler approach (e.g., split on whitespace and special-case strings — it's hacky but ships).
-
-The interviewer will care more about clean separation between stages than about supporting more SQL features.
+The interviewer cares more about clean separation between *storage*, *validation*, and *query* than about feature count.
