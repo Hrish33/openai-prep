@@ -16,7 +16,7 @@ Internalize these and Parts 1-3 are routine. The traps are mechanical, not conce
 
 **You already have this.** Mental check — you should hit all four:
 
-- Enqueue ALL initial sources at level 0 *before* the main loop.
+- Enqueue ALL initial sources at level 0 *before* the main loop./clear
 - Track "remaining target cells" (your LC 994 `fresh_oranges` counter) so you can detect -1 cases.
 - Level-by-level expansion via `for _ in range(len(q)):` — cells enqueued inside the inner loop only propagate next tick.
 - Return -1 when the queue empties but unreached targets remain.

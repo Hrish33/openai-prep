@@ -148,51 +148,193 @@ The three things to defend in code review:
 2. **`>= D`, not `> D`.** Infected on day 0 with D=2 → recovers on day 2. `2 - 0 >= 2` is true.
 3. **Buffered writes for spread.** `newly_infected` is collected from a stable snapshot of `active`, then applied. If you mutated the grid mid-loop, you'd get same-tick cascades.
 
-### Part 4A — threshold spread (snapshot-read)
+### Part 4A — threshold spread (active-set + vote count)
+
+Same shape as Part 3: active set of infected cells, buffered writes. The new wrinkle is the **vote count** — each active cell contributes 1 vote to each healthy neighbor, then a healthy cell with `votes >= K` gets infected.
 
 ```python
+from collections import defaultdict
+
+
 def time_to_full_infection_threshold(grid: list[list[int]], K: int) -> int:
     if not grid or not grid[0]:
         return 0
 
     rows, cols = len(grid), len(grid[0])
-    healthy = sum(1 for i in range(rows) for j in range(cols) if grid[i][j] == 0)
-    sources = sum(1 for i in range(rows) for j in range(cols) if grid[i][j] == 1)
+    active = set()
+    healthy = 0
+    for i in range(rows):
+        for j in range(cols):
+            if grid[i][j] == 1:
+                active.add((i, j))
+            elif grid[i][j] == 0:
+                healthy += 1
 
     if healthy == 0:
         return 0
-    if sources == 0:
+    if not active:
         return -1
 
     dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
     days = 0
+
     while healthy > 0:
-        snapshot = [row[:] for row in grid]
+        days += 1
+
+        # 1. VOTE — each active cell votes for its healthy neighbors.
+        votes = defaultdict(int)
+        for (i, j) in active:
+            for di, dj in dirs:
+                ni, nj = i + di, j + dj
+                if 0 <= ni < rows and 0 <= nj < cols and grid[ni][nj] == 0:
+                    votes[(ni, nj)] += 1
+
+        # 2. DECIDE — healthy cells with >= K votes get infected this tick.
         newly_infected = []
-        for i in range(rows):
-            for j in range(cols):
-                if snapshot[i][j] != 0:
-                    continue
-                count = sum(
-                    1 for di, dj in dirs
-                    if 0 <= i + di < rows and 0 <= j + dj < cols
-                    and snapshot[i + di][j + dj] == 1
-                )
-                if count >= K:
-                    newly_infected.append((i, j))
+        for cell, count in votes.items():
+            if count >= K:
+                newly_infected.append(cell)
 
+        # 3. STUCK CHECK — no new infections and healthy cells remain.
         if not newly_infected:
-            return -1   # stuck — threshold can never be met for remaining cells
+            return -1
 
+        # 4. APPLY — buffered writes, like Part 3.
         for (i, j) in newly_infected:
             grid[i][j] = 1
-        healthy -= len(newly_infected)
-        days += 1
+            active.add((i, j))
+            healthy -= 1
 
     return days
 ```
 
-Snapshot rather than buffer because we're *counting* neighbors — buffering would still work (count from the pre-tick state, write to a buffer) but the snapshot reads cleaner.
+Why active-set + vote-count instead of whole-grid snapshot:
+
+- **Same shape as Part 3.** You already have the muscle memory: active set, iterate it, buffer writes. No new control flow to invent.
+- **O(|active|) per tick, not O(rows × cols).** For a sparse grid the win is big; for a dense grid they're equivalent.
+- **No snapshot copy.** The vote dict serves the same role — counts come from the *current* `active` set (which is the pre-tick world), then we apply after.
+
+The "snapshot" framing in the prereqs doc is the textbook way to think about it (read the consistent old state, write the new state). The vote-dict implementation is the same idea expressed as "ask every active cell who they're voting for" rather than "scan every healthy cell and count their neighbors." Both correct.
+
+### Part 4B — death countdown
+
+Spec is fuzzy. **Clarify before coding** in the interview:
+- Does a started countdown tick down unconditionally, or pause if neighbor count drops below K? (Default: unconditional.)
+- Does a dead cell block spread (act like a wall), or just sit there? (Default: blocks — same as immune.)
+- "days_to_end" = day of last change, or day after stability is reached? (Default: day of last change.)
+- New 4th state for dead, or does it become healthy again? (Default: new state, value 3.)
+
+```python
+def time_to_end_with_death(grid: list[list[int]], K: int, N: int) -> tuple[int, int]:
+    if not grid or not grid[0]:
+        return 0, 0
+
+    rows, cols = len(grid), len(grid[0])
+    DEAD = 3
+
+    active: set[tuple[int, int]] = set()
+    death_countdown: dict[tuple[int, int], int] = {}
+    deaths = 0
+
+    for i in range(rows):
+        for j in range(cols):
+            if grid[i][j] == 1:
+                active.add((i, j))
+
+    if not active:
+        return 0, 0
+
+    dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+    days = 0
+    last_change_day = 0
+
+    while True:
+        days += 1
+        any_change = False
+
+        # 1. DEATH-DECAY — tick countdowns; kill those that hit 0.
+        just_died = []
+        for cell in list(death_countdown):
+            death_countdown[cell] -= 1
+            if death_countdown[cell] <= 0:
+                just_died.append(cell)
+        for (i, j) in just_died:
+            del death_countdown[(i, j)]
+            active.discard((i, j))
+            grid[i][j] = DEAD
+            deaths += 1
+            any_change = True
+
+        # 2. SPREAD — buffered. grid[ni][nj] == 0 naturally skips dead (3) and infected (1).
+        newly_infected = set()
+        for (i, j) in active:
+            for di, dj in dirs:
+                ni, nj = i + di, j + dj
+                if 0 <= ni < rows and 0 <= nj < cols and grid[ni][nj] == 0:
+                    newly_infected.add((ni, nj))
+
+        # 3. DEATH-START — count from snapshot (current grid, pre-apply).
+        for (i, j) in active:
+            if (i, j) in death_countdown:
+                continue
+            count = 0
+            for di, dj in dirs:
+                ni, nj = i + di, j + dj
+                if 0 <= ni < rows and 0 <= nj < cols and grid[ni][nj] == 1:
+                    count += 1
+            if count >= K:
+                death_countdown[(i, j)] = N
+                any_change = True
+
+        # 4. APPLY new infections.
+        for (i, j) in newly_infected:
+            grid[i][j] = 1
+            active.add((i, j))
+            any_change = True
+
+        if any_change:
+            last_change_day = days
+
+        # termination: nothing changed AND no pending countdowns
+        if not any_change and not death_countdown:
+            return last_change_day, deaths
+```
+
+Three things to defend:
+1. **Tick order: decay → spread → death-start → apply.** Death-start must read a *consistent* snapshot — that's why it happens before the apply step, so we count from the start-of-tick world.
+2. **Countdown is unconditional.** Once started, ticks down even if neighbors die. The alternative (pause/resume) creates oscillating-pause behavior that's almost always wrong.
+3. **Termination = no change AND no pending countdown.** A pending countdown is a *promise* that a death is coming, so we can't stop yet even if this tick was no-op.
+
+### Part 4C — composite (Parts 1 + 2 + 3 + B)
+
+Stacks all rules: spread, immune walls, D-day recovery, K-threshold death countdown.
+
+**Tick order: recover → death-decay → spread → death-start → apply.**
+
+The full code is ~70 lines; the structure is just 4B with a recovery pass at the top. Key additions vs. 4B:
+
+```python
+# 1. RECOVER (from Part 3) — recovered cells become immune (2).
+#    If a recovering cell had a pending death countdown, cancel it.
+just_recovered = [c for c in active if days - infection_day[c] >= D]
+for (i, j) in just_recovered:
+    active.discard((i, j))
+    grid[i][j] = 2
+    death_countdown.pop((i, j), None)
+    any_change = True
+
+# ... then 4B's steps 1-4 below this, in order.
+
+# in step 5 (apply new infections):
+for (i, j) in newly_infected:
+    grid[i][j] = 1
+    infection_day[(i, j)] = days
+    active.add((i, j))
+```
+
+**The recover-cancels-death thing matters.** If a cell is on the brink of recovering this tick, it should recover cleanly and not also get marked dead. Recovery beats death because recovery is processed first.
+
+If asked to defend the order: "recover first because recovered cells shouldn't take any further actions this tick; death-decay second because dying cells shouldn't get to spread; spread third on the still-active survivors; death-start fourth using the pre-apply snapshot."
 
 ---
 

@@ -13,9 +13,10 @@ Suggested helper (write it once, reuse across parts):
 Parts 1-3 are core. Part 4 variants and Part 5 are if-time.
 
 Encoding: 0 = healthy, 1 = infected, 2 = immune (Parts 2+).
+-1 for seen
 """
-
-from typing import Optional
+import collections
+from collections import deque
 
 
 # ============================================================
@@ -33,8 +34,46 @@ def time_to_full_infection(grid: list[list[int]]) -> int:
     HINT: this is LC 994 (Rotting Oranges) with the encoding flipped.
     Your `healthy` counter plays the role of `fresh_oranges`.
     """
-    # your code here
-    raise NotImplementedError
+    dirs = [[1,0], [-1,0] ,[0,1], [0,-1]]
+
+    queue = deque()
+
+    rows, cols = len(grid), len(grid[0])
+
+    days = 0
+    healthy = 0
+    for i in range(rows) :
+        for j in range(cols) :
+            if grid[i][j] == 0:
+                healthy += 1
+            if grid[i][j] == 1:
+                queue.append((i,j))
+
+    while queue and healthy > 0:
+        next_level = len(queue)
+        days += 1
+        for _ in range(next_level):
+            # pop infected cell and say its seen
+            i,j = queue.popleft()
+
+            for (x,y) in dirs:
+                ni, nj = i + x, j + y
+
+                if ni < 0 or nj < 0 or ni == rows or nj == cols :
+                    continue
+                #immune or seen
+                if grid[ni][nj] == 2 or grid[ni][nj] == -1:
+                    continue
+
+                if grid[ni][nj] == 0 :
+                    healthy -= 1
+                    grid[ni][nj] = -1
+                    queue.append((ni, nj))
+
+    if healthy == 0:
+        return days
+    return -1
+
 
 
 def time_to_full_infection_with_immunity(grid: list[list[int]]) -> int:
@@ -47,7 +86,7 @@ def time_to_full_infection_with_immunity(grid: list[list[int]]) -> int:
     the neighbor check already excludes it (only flips value 0).
     """
     # your code here
-    raise NotImplementedError
+    return time_to_full_infection(grid)
 
 
 def time_to_stable_state(grid: list[list[int]], D: int) -> int:
@@ -64,12 +103,57 @@ def time_to_stable_state(grid: list[list[int]], D: int) -> int:
     Edge cases: no initial infection (return 0), all-immune (return 0),
     D large enough that everyone gets infected before any recovery.
     """
-    # your code here
-    raise NotImplementedError
+    dirs = [[1,0], [-1,0] ,[0,1], [0,-1]]
+    active_infections = set()
+
+    rows, cols = len(grid), len(grid[0])
+
+    # map for what cells recover on this day
+    recovers_on = collections.defaultdict(set)
+
+    days = 0
+    healthy = 0
+    for i in range(rows) :
+        for j in range(cols) :
+            if grid[i][j] == 0:
+                healthy += 1
+            if grid[i][j] == 1:
+                active_infections.add((i,j))
+                recovers_on[days + D].add((i,j))
+
+    while active_infections:
+        days += 1
+
+        #recover anything and pop from active
+        for recovered_cell in recovers_on[days]:
+            active_infections.remove(recovered_cell)
+            grid[recovered_cell[0]][recovered_cell[1]] = 2
+        newly_infected = set()
+        for i, j in active_infections:
+            for (x,y) in dirs:
+                ni, nj = i + x, j + y
+
+                if ni < 0 or nj < 0 or ni == rows or nj == cols :
+                    continue
+                #immune or seen
+                if grid[ni][nj] == 2:
+                    continue
+
+                if grid[ni][nj] == 0 :
+                    healthy -= 1
+                    newly_infected.add((ni, nj))
+
+        for (i,j) in newly_infected:
+            grid[i][j] = 1
+            recovers_on[days + D].add((i, j))
+            active_infections.add((i,j))
+
+    return days
+
 
 
 # ============================================================
-# Part 4 — variants. Attempt only after Parts 1-3 are clean.
+# Part 4 — variants. Attempt only after Parts 1-3 are clean./
 # ============================================================
 
 
