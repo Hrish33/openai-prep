@@ -147,7 +147,6 @@ def time_to_stable_state(grid: list[list[int]], D: int) -> int:
             grid[i][j] = 1
             recovers_on[days + D].add((i, j))
             active_infections.add((i,j))
-
     return days
 
 

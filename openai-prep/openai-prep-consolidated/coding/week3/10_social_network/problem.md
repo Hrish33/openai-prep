@@ -1,4 +1,4 @@
-# Problem 10: Social Network / Follow Graph
+    # Problem 10: Social Network / Follow Graph
 
 **Prereqs:** Skim `00_prereqs.md` if you haven't internalized the 2-hop recommend pattern and the snapshot deep-copy trap.
 

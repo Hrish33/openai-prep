@@ -136,10 +136,11 @@ class Allocator:
 
         # RIGHT: is there a free block starting at `end`?
         if end in self.free:
-            size += self.free.pop(end)
+            size += self.free[end]
+            del self.free[end]
 
         # largest free key < start
-        li = self.free.bisect_right(start) - 1
+        li = self.free.bisect_left(start) - 1
         if li >= 0:
             left_start, left_size = keys[li], self.free[keys[li]]
             if left_start + left_size == start:

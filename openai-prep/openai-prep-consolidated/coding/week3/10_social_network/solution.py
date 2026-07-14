@@ -14,6 +14,7 @@ Pick ONE variant per attempt. Don't do both in the same session.
 """
 import collections
 from collections import Counter, defaultdict
+from operator import add
 from typing import Optional
 
 
@@ -78,18 +79,26 @@ class SocialNetwork:
 
     def __init__(self) -> None:
         # your code here
-        raise NotImplementedError
+        self.graph = {}
 
     def add_user(self, user_id: str) -> None:
         """Raises ValueError if the user already exists."""
         # your code here
-        raise NotImplementedError
+        if user_id in self.graph :
+            raise ValueError
+        self.graph[user_id] = set()
 
     def follow(self, follower: str, followee: str) -> None:
         """Raises ValueError if either user is missing.
         Self-follow is a no-op. Duplicate follow is a no-op."""
-        # your code here
-        raise NotImplementedError
+        if follower == followee:
+            return
+        if follower not in self.graph :
+            raise ValueError
+        if followee in self.graph[follower]:
+            return
+        self.graph[follower],add(followee)
+
 
     def create_snapshot(self) -> "Snapshot":
         """Returns an immutable view. Subsequent follow() calls must NOT
@@ -98,7 +107,7 @@ class SocialNetwork:
         comprehension is the right depth and ~10x faster.
         """
         # your code here
-        raise NotImplementedError
+        return Snapshot(self.graph)
 
 
 class Snapshot:
@@ -109,15 +118,22 @@ class Snapshot:
         passing a freshly-copied adjacency dict. The Snapshot eagerly builds
         the reverse follower index here so get_followers is O(F)."""
         # your code here
-        raise NotImplementedError
+        self.graph = {}
+        for node, edges in following :
+            self.graph[node] = set(edges)
+
 
     def is_following(self, follower: str, followee: str) -> bool:
-        # your code here
-        raise NotImplementedError
+        if follower == followee:
+            return False
+        if follower not in self.graph :
+            raise ValueError
+        return followee in self.graph[follower]
+
 
     def get_following(self, user_id: str) -> list[str]:
         # your code here
-        raise NotImplementedError
+        return self.graph.get(user_id, [])
 
     def get_followers(self, user_id: str) -> list[str]:
         """Efficient (O(F)) via the eager reverse index built in __init__."""
